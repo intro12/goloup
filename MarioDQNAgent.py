@@ -585,3 +585,33 @@ class MarioDQNAgent():
         self.env.close()
             #if done start new episode
 
+    def play(self):
+	self.env.reset()
+	episode_terminated = False
+	self.cur_state = None
+
+	while not episode_terminated:
+		self.env.render()
+
+		if self.cur_state is None:
+			action = self.actions[0]
+		else:
+			action = self.choose_action(self.cur_state)
+
+		state_prime, reward, done, state_info = self.env.step(action)
+		
+		state_prime = np.reshape(state_prime, [224, 256, 3]).astype(np.float32)
+                state_prime = state_prime[:, :, 0] * 0.299 + state_prime[:, :, 1] * 0.587 + state_prime[:, :, 2] * 0.114
+                state_prime = Image.fromarray(state_prime)
+                resized_screen = state_prime.resize((84, 110), Image.BILINEAR)
+                resized_screen = np.array(resized_screen)
+                state_prime = resized_screen[18:102, :]
+                state_prime = np.reshape(state_prime, [84, 84, 1])
+                state_prime = state_prime.astype(np.uint8)
+
+		self.cur_state = state_prime
+		self.cur_state = self.process_state_for_network(self.cur_state)
+
+		if done:
+			episode_terminated = True
+	self.env.close()
