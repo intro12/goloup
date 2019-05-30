@@ -11,7 +11,7 @@ with tf.device('/device:GPU:0'):
         env = gym.make('SuperMarioBros-1-1-v0')
         state_size = [84,84,10] #we will convert the images to grayscale
         gamma = 0.99 #discount
-        num_episodes = 100 #how many levels to attempt
+        num_episodes = 2000 #how many levels to attempt
         batch_size = 32 #SARST batch size
         
         #Given six NES buttons, and a lifetime of playing Mario, I've determined there are really on 14

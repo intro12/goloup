@@ -52,13 +52,13 @@ class MarioDQNAgent():
 
         #All learning rate configuration goes here
         self.learning_rate_init = 0.00025 #0.00025 used in atari paper
-        self.learning_rate_decay = 0.99999
+        self.learning_rate_decay = 0.999999
         self.learning_rate_decay_steps = 8
 	self.past_states = None
         #and some exploration parameters
         self.epsilon = 1.0
         self.epsilon_min = 0.05
-        self.epsilon_decay = 0.99999
+        self.epsilon_decay = 0.999999
         
         #we wont clip the loss, but we will clip gradients themselves.
         self.clip_gradients_enabled = False
@@ -137,26 +137,15 @@ class MarioDQNAgent():
 	return history
     
     #This function will be used to build both the prediction network as well as the target network
-    def build_network(self, num_frames, rnn_cell_1, scope_name, prediction_network=True, rnn_cell_2=None):
+    def build_network(self, num_frames, rnn_cell_1, scope_name, prediction_network=True):
         
-       	#net_shape = [None] + [s for s in self.state_size]
-#	self.network_inputs[scope_name] =  tf.placeholder(shape=[None,84,84,num_frames],dtype=tf.float32)
-#        self.image_permute = tf.transpose(self.network_inputs[scope_name], perm=[0, 3, 1, 2])
-#	self.image_reshape = tf.reshape(self.network_inputs[scope_name], [None, 84, 84, 1])
-
-	#net_shape = net_shape[:,:,:,3]*4
-        #print net_shape
-        #self.num_net_frames = num_frames
         with tf.variable_scope(scope_name):
-            #self.network_inputs[scope_name] = tf.placeholder(tf.float32, shape=net_shape, name=scope_name+"_inputs")
-	    #print [:,:,:,4]*self.network_inputs[scope_name]
-            #The first layer is an 7x7 convolutional_layer with stride 2, ReLU
-            #This reduces 256x224x1 to 128x112x8
+            
 	    self.network_inputs[scope_name] =  tf.placeholder(shape=[None, 84, 84, num_frames],dtype=tf.float32)
             self.image_permute = tf.transpose(self.network_inputs[scope_name], perm=[0, 3, 1, 2])
-	    #tf.cast(self.image_permute, tf.float32)
+	    
             self.image_reshape = tf.reshape(self.network_inputs[scope_name], [-1, 84, 84, 1])
-	    #tf.cast(self.image_reshape, tf.float32)
+	    
             conv1 = ops.conv(self.image_reshape,
                             32,
                             kernel=[8,8],
@@ -165,10 +154,6 @@ class MarioDQNAgent():
                             name="conv1")
             conv1 = tf.nn.relu(conv1)
             
-            #Then a 3x3 max pool stride 2, reduces to 64x56x8
-            #conv1_pool = tf.nn.max_pool(conv1, ksize=[1,3,3,1], strides=[1,2,2,1], padding='SAME')
-            
-            #Then a 5x5 convolutional layer with stride 2 to reduce to 32x28x16
             conv2 = ops.conv(conv1,
                             64,
                             kernel=[4,4],
@@ -177,10 +162,6 @@ class MarioDQNAgent():
                             name="conv2")
             conv2 = tf.nn.relu(conv2)
             
-            #Then a 3x3 max pool stride 2, reduces to 16x14x16
-            #conv2_pool = tf.nn.max_pool(conv2, ksize=[1,3,3,1], strides=[1,2,2,1], padding='SAME')
-            
-            #Then a 3x3 convolution stride 2, reduces to 8x7x32. no pool after this
             conv3 = ops.conv(conv2,
                             64,
                             kernel=[3,3],
@@ -189,10 +170,11 @@ class MarioDQNAgent():
                             name="conv3")
             conv3 = tf.nn.relu(conv3)
 	    conv3 = tf.contrib.layers.flatten(conv3)
+	
+	    #Hook this to fully-connected Recurrent Layer
 
 	    conv4 = tf.contrib.layers.fully_connected(conv3, 512, activation_fn=tf.nn.relu)
 
-	    
 	    self.convFlat = tf.reshape(conv4,[self.net_batch_size,num_frames,512])
 	    self.state_in_1 = rnn_cell_1.zero_state(self.net_batch_size, tf.float32)
 		
@@ -200,35 +182,15 @@ class MarioDQNAgent():
 	    self.rnn_out_dim = 512
 	    self.rnn_last_out = tf.slice(self.rnn_out, [0,num_frames-1,0], [-1, 1, -1])
 	    self.rnn = tf.squeeze(self.rnn_last_out, [1])
-
-            #Hook this to a fully-connected layer
-
-#            with tf.variable_scope('fc1') as scope:
-#                w1 = tf.get_variable('fcw1', shape=[conv3.get_shape()[1], 512],
-#                                                   initializer=tf.contrib.layers.xavier_initializer())
-#                b1 = tf.get_variable('fcb1', shape=[512],
-#                                                    initializer=tf.constant_initializer(0.0))
-#                fc1_out = tf.matmul(conv3, w1) + b1
-#                fc1_out = tf.nn.relu(fc1_out)
-		#tf.summary.histogram("fc1_out",fc1_out)
-#                fc1_out = tf.nn.dropout(fc1_out, keep_prob=self.dropout_keep_probability)
             
             #Hook this to a final fully-connected layer
             with tf.variable_scope('fc2') as scope:
-                w2 = tf.get_variable('fcw2', shape=[512, self.num_actions],
-                                                   initializer=tf.contrib.layers.xavier_initializer())
-                b2 = tf.get_variable('fcb2', shape=[self.num_actions],
-                                                    initializer=tf.constant_initializer(0.0))
-                #tf.summary.histogram("weights", w2)
-		#tf.summary.histogram("biases", b2)
-		if prediction_network:
-                    self.q_predictions = tf.matmul(self.rnn, w2) + b2
-                    self.max_predict_q_action = tf.argmax(self.q_predictions, axis=1)
-		   #tf.summary.histogram("max_q_predict", self.max_predict_q_action)
-                else:
-                    self.q_targets = tf.matmul(self.rnn, w2) + b2
-		    #tf.summary.histogram("q_target" , self.q_targets)
-
+            
+	    	if prediction_network:
+			self.q_predictions = tf.contrib.layers.fully_connected(self.rnn, self.num_actions, activation_fn=None)
+			self.max_predict_q_action = tf.argmax(self.q_predictions, axis=1)
+		else:
+			self.q_targets = tf.contrib.layers.fully_connected(self.rnn, self.num_actions, activation_fn=None)
     
     def build_network_copier(self):
         
@@ -362,41 +324,16 @@ class MarioDQNAgent():
 	actions = np.asarray([x for x in action])
 	rewards = np.asarray([x for x in reward])
 	batch_size = self.batch_size
-	#print(type(batch_size))
-	#states = np.stack([state])
-	#actions = np.asarray([action])
-	#next_states = np.stack([state_prime])
-	#rewards = np.stack([reward])
-	#mask = np.asarray([1-int(state_prime_is_terminal)])
-	#print(states.dtype)
-        #print(states.shape)
-        #print(next_states.dtype)
-        #print(next_states.shape)
+
         #get the logits from the target network for this resulting state
         q_value_state_prime = self.q_targets.eval({self.network_inputs['target_network'] : next_states, self.net_batch_size : batch_size})
-        #print(state.dtype)
-	#print(state.shape)
-	#print(state_prime.dtype)
-	#print(state_prime.shape)
-        #the max logit is the max action q value
+        
         max_q_value_state_prime = np.max(q_value_state_prime, axis=1)
-
-	#if reward > 0:
-	#	reward = 1
-	#elif reward < 0:
-#		reward = -1
-#	else:
-#		reward = 0
 
         #the state_prime_is_terminal * 1  converts [True, False, True] to [1,0,1].
         # Subtracting this from 1 effectively eliminates the entire term, leaving just reward for terminal states
         target_y = rewards + (self.gamma * max_q_value_state_prime * (1 - (state_prime_is_terminal*1)))
-       
-	#tf.summary.scalar("epsilon", self.epsilon
-        #tf.summary.scalar("reward", reward)
-	 
-       	#merged_summary = tf.summary.merge_all()
-        #writer = tf.summary.FileWriter("/home/intro12/Documents/1")
+     
         #Now that the terms are in place, run a session
         _, self.report_predictions, lr, self.one_hot_actions, self.final_predictions, self.report_loss, self.rnn_out = self.session.run([self.optimizer, self.q_predictions,                                        self.learning_rate, self.chosen_actions_one_hot, self.predict_y, self.loss,  self.rnn], {
             self.network_inputs['prediction_network'] : states,
@@ -405,20 +342,8 @@ class MarioDQNAgent():
             self.target_y : target_y,     #and the targets in the optimizer
             self.global_step : self.total_iterations,
 	    self.net_batch_size : batch_size
-	    #and update our global step. TODO, maybe this should be self.global_step. make sure isn't incremented twice with minimize() call
         })
-        
-	#if self.minibatches_run % 100 == 1000:
-	#	sum = self.session.run(self.merged_summary, {
-        #   		self.network_inputs['prediction_network'] : state,     # it'll need the states possibly
-        #    		self.chosen_actions : action, #and definitely the actions
-        #    		self.target_y : target_y,     #and the targets in the optimizer
-        #    		self.global_step : self.total_iterations #and update our global step. TODO, maybe this should be self.global_step. make sure isn't incremented twice with mi$
-       #		})
-#		self.writer.add_summary(sum, self.minibatches_run)
-        #if self.episode_iterations == 0 and self.episode_count % 5 == 0:
-        #    print "Episode %d\t\tLearning Rate: %.9f\t\tEpsilon: %.6f" % (self.episode_count, lr, self.epsilon)
-        
+       
         self.minibatches_run += 1
         
     def _update_last_100_rewards(self, deq, to_add):
@@ -469,13 +394,10 @@ class MarioDQNAgent():
             #self.previous_state_info = None
             self.report_loss = 0
             #last 100 episode check?
-            stacked_frames  =  deque([np.zeros((84,84), dtype=np.int) for i in range(4)], maxlen=4) 
 	    
             while not episode_terminated:
                 
                 self.env.render()
-	        
-		#self.cur_state = self.process_state_for_network(self.cur_state)
 
                 #First frame - do nothing
                 if self.cur_state is None:
@@ -501,19 +423,7 @@ class MarioDQNAgent():
 		state_prime = resized_screen[18:102, :]
  	       	state_prime = np.reshape(state_prime, [84, 84, 1])
 		state_prime = state_prime.astype(np.uint8)
-		#state_prime = np.dstack((self.cur_state,state_prime))
-		#state_prime = state_prime[: ,:, 1:]
-		
-#		if self.cur_state is None:
-#			stacked_frames.append(state_prime)
-#		        stacked_frames.append(state_prime)
-#        		stacked_frames.append(state_prime)
-#		        stacked_frames.append(state_prime)
-#			
-#			stacked_state = np.stack(stacked_frames, axis=2)
-#		else:
-#			stacked_frames.append(state_prime)
-#			stacked_state = np.stack(stacked_frames, axis=2)
+	
 
 		if reward > 0:
                 	reward = 1
@@ -521,8 +431,7 @@ class MarioDQNAgent():
                 	reward = -1
         	else:
                 	reward = 0
-		
-#		state_prime = stacked_state
+
                 #Then we store away what happened, unless we are in the first stage
                 if self.cur_state is not None:
                     self.replay_memory.add_to_memory(self.cur_state,
@@ -534,11 +443,7 @@ class MarioDQNAgent():
                 #Then we update the current state after safely storing it
                 self.cur_state = state_prime
 		self.cur_state = self.process_state_for_network(self.cur_state)
-                #tf.summary.scalar("epsilon", self.epsilon)
-        	#tf.summary.scalar("reward", reward)
-         
-        	#self.merged_summary = tf.summary.merge_all()
-        	#self.writer = tf.summary.FileWriter("/home/intro12/Documents/1")
+        
                 #then run an actual neural network trainer on that replay memory
                 if self.replay_memory.memory_size >= self.batch_size:
                     self.run_minibatch()
@@ -556,18 +461,14 @@ class MarioDQNAgent():
                 #The rewards get updated for the episode
                 self.total_episode_reward += reward
 		
-		#tf.summary.histogram("epsilon", self.epsilon)
-		#tf.summary.histogram("reward", reward)
-                #merged_summary = tf.summary.merge_all()
-		#writer = tf.summary.FileWriter("/home/intro12/Documents/1")
-		#writer.add_graph(self.session.graph)
-		#ax = plot.plot()
 		if self.minibatches_run % 10000 == 0:
 			plot.figure(1)
 			plot.subplot(211)
 			plot.plot(self.minibatches_run, self.epsilon, 'bo')
 			plot.subplot(212)
 			plot.plot(self.minibatches_run, self.total_episode_reward, 'bo')
+			plot.subplot(221)
+			plot.plot(self.minibatches_run, self.report_loss, 'bo')
 			plot.grid()
                 if done:
                     #print("episode %d finished in %d iterations with reward %.4f" % (self.episode_count+1, self.episode_iterations, self.total_episode_reward))
