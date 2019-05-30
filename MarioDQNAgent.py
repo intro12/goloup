@@ -98,7 +98,8 @@ class MarioDQNAgent():
         self.deep_q_network()
     
     def deep_q_network(self):
-        
+
+	#Create Recurrent Network Cells for Prediction and Target Networks  
 	cell = tf.contrib.rnn.BasicLSTMCell(num_units=512, state_is_tuple=True)
 	cellT = tf.contrib.rnn.BasicLSTMCell(num_units=512, state_is_tuple=True)
 	with tf.variable_scope('net_batch_size'):
