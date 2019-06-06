@@ -52,13 +52,13 @@ class MarioDQNAgent():
 
         #All learning rate configuration goes here
         self.learning_rate_init = 0.00025 #0.00025 used in atari paper
-        self.learning_rate_decay = 0.999999
+        self.learning_rate_decay = 0.99999
         self.learning_rate_decay_steps = 8
 	self.past_states = None
         #and some exploration parameters
         self.epsilon = 1.0
         self.epsilon_min = 0.05
-        self.epsilon_decay = 0.999999
+        self.epsilon_decay = 0.99999
         
         #we wont clip the loss, but we will clip gradients themselves.
         self.clip_gradients_enabled = False
@@ -79,13 +79,15 @@ class MarioDQNAgent():
         self.episode_rewards = np.zeros(shape=(self.num_episodes), dtype=np.float32)
         self.total_iterations = 0
         self.episode_iterations = 0
-        
+        self.raport_target_y = 0
+	self.report_q = 0
+	self.report_predictions = 0
         #openAI tests convergence by examining rewards per 100 episodes, so we should try this as well.
-        self.last_100_episode_rewards = deque([])
+        self.last_100_episode_rewards = 0.
         self.all_episode_rewards = []
         
         #How often we get an update printed to screen about how things are looking and what param values are
-        self.report_frequency = 1
+        self.report_frequency = 100
         
         #instantiate a new blank replay memory to store state, action, reward, new_state, new_state_is_terminal arrays
         self.replay_memory = SarstReplayMemory(self.memory_capacity,
@@ -145,7 +147,7 @@ class MarioDQNAgent():
 	    self.network_inputs[scope_name] =  tf.placeholder(shape=[None, 84, 84, num_frames],dtype=tf.float32)
             self.image_permute = tf.transpose(self.network_inputs[scope_name], perm=[0, 3, 1, 2])
 	    
-            self.image_reshape = tf.reshape(self.network_inputs[scope_name], [-1, 84, 84, 1])
+            self.image_reshape = tf.reshape(self.image_permute, [-1, 84, 84, 1])
 	    
             conv1 = ops.conv(self.image_reshape,
                             32,
@@ -325,7 +327,7 @@ class MarioDQNAgent():
 	actions = np.asarray([x for x in action])
 	rewards = np.asarray([x for x in reward])
 	batch_size = self.batch_size
-
+	state_prime_is_terminal = np.asarray([1 - int(x) for x in state_prime_is_terminal])
         #get the logits from the target network for this resulting state
         q_value_state_prime = self.q_targets.eval({self.network_inputs['target_network'] : next_states, self.net_batch_size : batch_size})
         
@@ -333,10 +335,10 @@ class MarioDQNAgent():
 
         #the state_prime_is_terminal * 1  converts [True, False, True] to [1,0,1].
         # Subtracting this from 1 effectively eliminates the entire term, leaving just reward for terminal states
-        target_y = rewards + (self.gamma * max_q_value_state_prime * (1 - (state_prime_is_terminal*1)))
+        target_y = rewards + (self.gamma * max_q_value_state_prime * state_prime_is_terminal)
      
         #Now that the terms are in place, run a session
-        _, self.report_predictions, lr, self.one_hot_actions, self.final_predictions, self.report_loss, self.rnn_out = self.session.run([self.optimizer, self.q_predictions,                                        self.learning_rate, self.chosen_actions_one_hot, self.predict_y, self.loss,  self.rnn], {
+        _, self.report_predictions, lr, self.one_hot_actions, self.final_predictions, self.report_loss, self.rnn_out = self.session.run([self.optimizer, self.q_predictions,                                        self.learning_rate, self.chosen_actions_one_hot, self.predict_y, self.loss, self.rnn], {
             self.network_inputs['prediction_network'] : states,
 	    self.network_inputs['target_network'] : next_states,     # it'll need the states possibly
             self.chosen_actions : actions, #and definitely the actions
@@ -346,14 +348,15 @@ class MarioDQNAgent():
         })
        
         self.minibatches_run += 1
-        
-    def _update_last_100_rewards(self, deq, to_add):
-        if len(deq) == 100:
-            _ = deq.popleft()
-        deq.append(to_add)
+        #self.raport_target_y = np.mean(target_y)
+	self.report_q = np.mean(target_y)
+   # def _update_last_100_rewards(self, deq, to_add):
+    #    if len(deq) == 100:
+     #       _ = deq.popleft()
+      #  deq.append(to_add)
     
     def start_new_episode(self):
-        self._update_last_100_rewards(self.last_100_episode_rewards, self.total_episode_reward)
+       # self._update_last_100_rewards(self.last_100_episode_rewards, self.total_episode_reward)
         self.episode_rewards[self.episode_count] = self.total_episode_reward
         self.episode_count += 1
         self.episode_iterations = 0
@@ -395,7 +398,7 @@ class MarioDQNAgent():
             #self.previous_state_info = None
             self.report_loss = 0
             #last 100 episode check?
-	    
+	    state_prime = None
             while not episode_terminated:
                 
                 self.env.render()
@@ -406,8 +409,8 @@ class MarioDQNAgent():
                 else:
                     #The first thing we need to do is select an action
                     action = self.choose_action(self.cur_state)
- 		
-		
+
+ 		processed_state = state_prime
                 #Then we act!
                 state_prime, reward, done, state_info = self.env.step(action)
                 #print("Action: %s\tDiscrete:%d\tReward: %.4f" % (str(action), self.actions.index(action), reward))
@@ -424,26 +427,20 @@ class MarioDQNAgent():
 		state_prime = resized_screen[18:102, :]
  	       	state_prime = np.reshape(state_prime, [84, 84, 1])
 		state_prime = state_prime.astype(np.uint8)
-	
+		
 
-		if reward > 0:
-                	reward = 1
-       		elif reward < 0:
-                	reward = -1
-        	else:
-                	reward = 0
+		reward = np.clip(reward, -1, 1)
 
                 #Then we store away what happened, unless we are in the first stage
                 if self.cur_state is not None:
-                    self.replay_memory.add_to_memory(self.cur_state,
+                    self.replay_memory.add_to_memory(processed_state,
                                                     self.actions.index(action), #SARST has access no access to button maps
                                                     reward,
                                                     state_prime,
-                                                    done,self.report_loss)
-                    
+                                                    done,self.report_loss)                    
                 #Then we update the current state after safely storing it
-                self.cur_state = state_prime
-		self.cur_state = self.process_state_for_network(self.cur_state)
+            
+		self.cur_state = self.process_state_for_network(state_prime)
         
                 #then run an actual neural network trainer on that replay memory
                 if self.replay_memory.memory_size >= self.batch_size:
@@ -452,6 +449,7 @@ class MarioDQNAgent():
                 #increment counters for decayed variables
                 self.total_iterations += 1
                 self.episode_iterations += 1
+
                                 #decay agent exploration 
                 self.epsilon = max(self.epsilon_min, self.epsilon*self.epsilon_decay)
                 
@@ -461,16 +459,28 @@ class MarioDQNAgent():
                 
                 #The rewards get updated for the episode
                 self.total_episode_reward += reward
-		
+
+		self.last_100_episode_rewards += reward
+
 		if self.minibatches_run % 10000 == 0:
 			plot.figure(1)
 			plot.subplot(211)
-			plot.plot(self.minibatches_run, self.epsilon, 'bo')
-			plot.subplot(212)
 			plot.plot(self.minibatches_run, self.total_episode_reward, 'bo')
-			plot.subplot(221)
-			plot.plot(self.minibatches_run, self.report_loss, 'bo')
-			plot.grid()
+
+            	if self.minibatches_run % 10000 == 0 and self.minibatches_run != 0:
+                	plot.figure(3)
+	                plot.subplot(211)
+        	        plot.plot(self.minibatches_run, self.epsilon, 'bo')
+               		#plot.subplot(212)
+               		#plot.plot(self.minibatches_run, self.total_episode_reward, 'bo')
+	                plot.figure(4)
+        	        plot.subplot(211)
+               		plot.plot(self.minibatches_run, self.report_loss, 'bo')
+	                plot.figure(5)
+        	        plot.subplot(211)
+                	plot.plot(self.minibatches_run, self.report_q, 'bo')
+	                plot.grid()
+
                 if done:
                     #print("episode %d finished in %d iterations with reward %.4f" % (self.episode_count+1, self.episode_iterations, self.total_episode_reward))
                     print("ran total of %d minibatches so far" % self.minibatches_run)
@@ -479,7 +489,13 @@ class MarioDQNAgent():
                     episode_terminated=True
                     self.all_episode_rewards.append(self.total_episode_reward)
                     self.start_new_episode()
-        
+
+            if self.episode_count % 100 == 0:
+                plot.figure(2)
+                plot.subplot(211)
+                plot.plot(self.episode_count, self.last_100_episode_rewards, 'bo')
+                self.last_100_episode_rewards = 0.
+
         #nore more episodes, close the monitor
         print "Mean episode rewards per %d timesteps are: \n %s" % (self.report_frequency, str(mean_episode_rewards[:self.episode_count]))
         #print self.all_episode_rewards
