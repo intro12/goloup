@@ -57,7 +57,7 @@ class MarioDQNAgent():
 	self.past_states = None
         #and some exploration parameters
         self.epsilon = 1.0
-        self.epsilon_min = 0.05
+        self.epsilon_min = 0.01
         self.epsilon_decay = 0.99999
         
         #we wont clip the loss, but we will clip gradients themselves.
